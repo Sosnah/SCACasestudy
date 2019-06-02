@@ -1,0 +1,301 @@
+---
+title: "SCA_SS19_Fallstudie"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Laden von Packages
+```{r, message=FALSE, warning=FALSE}
+library("zoo")
+library("forecast")
+library("ggplot2")
+```
+
+```{r}
+transactions = read.csv2("Paketone.csv")
+
+str(transactions)
+
+summary(transactions)
+```
+
+
+# Berechnung eines Dataframes mit dem Absatz der verschiedenen Produktgruppen im Vereinigten Königreich
+
+```{r}
+
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+
+```
+
+
+# 1. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+#ggplot(gbwide, aes(x = gbwide$AccountingMonth, ymin = (0), ymax = 250)) + 
+  
+  #geom_line(aes(y = gbwide$Menge.1, group = 1, colour = "Menge 1")) +
+
+  #geom_line(aes(y = gbwide$Menge.3, group = 1, colour = "Menge 3")) +
+  
+  #geom_line(aes(y = gbwide$Menge.5, group = 1, colour = "Menge 5")) +
+  
+  #geom_line(aes(y = gbwide$Menge.7, group = 1, colour = "Menge 7")) +
+
+  #theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+# Berechnung der durchschnittlichen monatlichen Nachfragen je Produkt, um damit Ausreißer / Großaufträge besser 
+# bestimmen zu können
+# Def. Großauftrag: Überschreitet durchschnittliche monatliche Nachfrage
+
+```{r}
+
+summary(gbwide)
+
+```
+
+
+# Es erscheint nicht sinnvoll, Menge.1 sowie Menge.7 von Großaufträgen gemäß oben stehender Definition zu befreien,
+# da das arithmetische Mittel bereits kleiner 1 ist (und nicht weniger als 1 verkauft werden kann). 
+# Auch bei Menge 5 gibt es viele Monate, insbesondere am Anfang des Datenbereichs, welche sich auf 0 belaufen. 
+# Eine sinnvolle Bereinigung um Großaufträge kann also nur über Exklusion dieser Monate erreicht werden.
+# Hier also noch eine Analyse, wie die durchschnittliche Nachfrage in Monaten mit Nachfrage > 0 war:
+
+```{r}
+
+MengeEins = subset(gbwide, Menge.1 > 0)
+
+paste0("Menge 1: ",mean(MengeEins$Menge.1))
+
+# Aus Gründen der Vollständigkeit auch noch der Durchschnitt von Menge 3
+
+paste0("Menge 3: ", mean(gbwide$Menge.3))
+
+MengeFuenf = subset(gbwide, Menge.5 > 0)
+
+paste0("Menge 5: ", mean(MengeFuenf$Menge.5))
+
+MengeSieben = subset(gbwide, Menge.7 > 0)
+
+paste0("Menge 7: ", mean(MengeSieben$Menge.7))
+
+```
+
+
+# Jetzt Anzeige aller als Großaufträge definierter Einträge in Transactions
+
+```{r}
+
+l_transactionsEins = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "1" & Menge > mean(MengeEins$Menge.1))
+
+l_transactionsEins
+
+l_transactionsDrei = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & Menge > mean(gbwide$Menge.3))
+
+l_transactionsDrei
+
+l_transactionsFuenf = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "5" & Menge > mean(MengeFuenf$Menge.5))
+
+l_transactionsFuenf
+
+l_transactionsSieben = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "7" & Menge > mean(MengeSieben$Menge.7))
+
+l_transactionsSieben
+```
+
+
+# Bereinigung um die zuvor identifizierten Werte 
+# Keine wiederkehrenden Großaufträge erkannt, daher Löschung bei 3 und 5
+# Löschung bei 1 und 7 nicht wirklich sinnvoll, da nicht wirklich Großaufträge
+
+
+```{r}
+
+row_to_delete = which((transactions$Menge > mean(gbwide$Menge.3) & transactions$Gruppe == "3") | (transactions$Menge > mean(MengeFuenf$Menge.5) & transactions$Gruppe == "5"))
+
+transactions = transactions[-row_to_delete,]
+
+rm(row_to_delete)
+
+```
+
+
+# Long -> wide des neuen bereinigten Dataframes
+
+```{r}
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+```
+
+
+# 2. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+# 201711 hat extrem hohen Wert für Menge.3, also Überprüfung
+
+```{r}
+
+subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & AccountingMonth == "201711")
+
+```
+
+
+# An dieser Stelle sind auffällig viele Aufträge (4) mit Menge 25 und fortlaufenden Bestellnummern zu sehen,
+# was darauf hindeutet, dass es sich hierbei nur um einen Auftrag mit der Menge 100 handelt.
+# Dieser würde gemäß Definition als Großauftrag klassifiziert werden und bereinigt werden müssen. 
+# Eine Analyse der anderen Monate mit hohen Bestellmengen sollte vorher durchgeführt werden, sollte es sich hierbei
+# um einen wiederkehrenden Großauftrag handeln. 
+# Das sind die Perioden 201311, 201601, 201901, 201903 
+
+```{r}
+
+subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & (AccountingMonth == "201711" | AccountingMonth == "201311" | AccountingMonth == "201601" | AccountingMonth == "201901" | AccountingMonth == "201903"))
+
+```
+
+
+# Weder ist das gleiche Muster von Bestellungen wie in 2017-11 zu sehen, noch scheint es ein Muster von 
+# Großaufträgen zu sehen. Bereinigung deshalb nur um die vorher identifizierten Werte.
+
+```{r}
+
+row_to_delete = which(transactions$Menge == "25" & transactions$Gruppe == "3" & transactions$AccountingMonth == "201711")
+
+transactions = transactions[-row_to_delete,]
+
+rm(row_to_delete)
+
+subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & AccountingMonth == "201711")
+
+```
+
+
+# Long -> wide des neuen bereinigten Dataframes
+
+```{r}
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+```
+
+
+# 3. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+
+
+
