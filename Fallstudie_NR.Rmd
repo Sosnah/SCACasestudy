@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 #Daten laden
 ```{r}
 #Paket1
-Paket1 = read.csv2('Paket1.csv')
+Paket1 = read.csv2('Paketone.csv')
 Paket1$Gruppe = as.factor(Paket1$Gruppe)
 
 #Market_Developmnet laden und um % bereinigen
@@ -28,6 +28,10 @@ BIP_DE$BIP = ts(BIP_DE$BIP, frequency= 12)
 Invest_DE = read.csv2('InvestDE.csv')
 Invest_DE$AccountingMonth = as.factor(Invest_DE$AccountingMonth)
 Invest_DE$Invest = ts(Invest_DE$Invest, frequency= 12)
+
+#Libraries einbinden
+library("ggplot2")
+require(scales)
 ```
 
 #Übersicht verschaffen
@@ -40,7 +44,7 @@ summary(Paket1)
 
 #Filtern auf Zielmärkt Deutschland
 ```{r}
-Paket1_DE = aggregate(Menge ~ AccountingMonth+Gruppe, data= subset(Paket1, Landeskuerzel =='DE'), sum)
+Paket1_DE = aggregate(Menge ~ AccountingMonth+Gruppe, data= subset(Paket1, Landeskürzel =='DE'), sum)
 
 #Long to Wide und Anpassung des Zeitraumes aufgrund IndepentVariablen
 DEwide = reshape(Paket1_DE, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
@@ -70,8 +74,7 @@ ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.7), ymi
 
 #BIP glätten und Visualisierung
 ```{r}
-library(ggplot2)
-require(scales)
+
 BIP_DE$ets = forecast(ets(BIP_DE$BIP, model='ZZZ'))$fitted
 
 ggplot(BIP_DE)+geom_line(aes(x=AccountingMonth, y=BIP, group=1))+geom_line(aes(x=AccountingMonth, y=ets, group=1),colour='pink')+theme(axis.text.x = element_text(angle = 90, hjust = 1))
