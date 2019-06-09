@@ -1,0 +1,125 @@
+---
+title: "Paket1"
+author: "NMR, JAZ"
+date: "5/31/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Daten laden
+```{r}
+#Paket1
+Paket1 = read.csv2('Paketone.csv')
+Paket1$Gruppe = as.factor(Paket1$Gruppe)
+
+#Market_Developmnet laden und um % bereinigen
+market_dev = read.csv2('market_dev.csv')
+market_dev = as.data.frame(sapply(market_dev, function(x) as.numeric(gsub("%", "", x))))
+
+#BIP_DE (Quartalsbasis Glättung folgt)
+BIP_DE= read.csv2('DE_BIP.csv')
+BIP_DE$AccountingMonth = as.factor(BIP_DE$AccountingMonth)
+BIP_DE$BIP = ts(BIP_DE$BIP, frequency= 12)
+
+#Energy Investment_DE in Mio € (Jahresbasis Glättung folgt)
+Invest_DE = read.csv2('InvestDE.csv')
+Invest_DE$AccountingMonth = as.factor(Invest_DE$AccountingMonth)
+Invest_DE$Invest = ts(Invest_DE$Invest, frequency= 12)
+
+#Libraries einbinden
+library("ggplot2")
+require(scales)
+```
+
+#Übersicht verschaffen
+```{r}
+#str(Paket1)
+summary(Paket1)
+#str(market_dev)
+#summary(market_dev)
+```
+
+#Filtern auf Zielmärkt Deutschland
+```{r}
+Paket1_DE = aggregate(Menge ~ AccountingMonth+Gruppe, data= subset(Paket1, Landeskürzel =='DE'), sum)
+
+#Long to Wide und Anpassung des Zeitraumes aufgrund IndepentVariablen
+DEwide = reshape(Paket1_DE, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+DEwide = subset(DEwide, AccountingMonth>'201312')
+DEwide$AccountingMonth = as.factor(DEwide$AccountingMonth)
+
+#Sortierung und Bereinigung der NA
+DEwide = DEwide[order(DEwide$AccountingMonth),]
+DEwide[is.na(DEwide)] = 0
+
+DEwide
+```
+
+# 3. Explorative visuelle Datenanalyse für den Absatz in DE
+```{r}
+
+ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.2), ymin = 0, ymax = 20), group = 1) + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 20), group = 1) + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(DEwide) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + theme(axis.text.x = element_text(angle = 90))
+```
+
+#BIP glätten und Visualisierung
+```{r}
+
+BIP_DE$ets = forecast(ets(BIP_DE$BIP, model='ZZZ'))$fitted
+
+ggplot(BIP_DE)+geom_line(aes(x=AccountingMonth, y=BIP, group=1))+geom_line(aes(x=AccountingMonth, y=ets, group=1),colour='pink')+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+DEwide = merge(DEwide, BIP_DE[,c(1,2)], by.x = "AccountingMonth", by.y = "AccountingMonth")
+```
+#Großaufträge
+```{r}
+
+Paket1_DE_max = aggregate(Menge ~ AccountingMonth+Gruppe, data= subset(Paket1, Landeskuerzel =='DE'), max)
+#DEwide_max
+DEwide_max = reshape(Paket1_DE_max, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+DEwide_max = DEwide_max[order(DEwide_max$AccountingMonth),]
+DEwide_max[is.na(DEwide_max)] = 0
+colnames(DEwide_max) = c("AccountingMonth", "Mengemax.1", "Mengemax.2", "Mengemax.3", "Mengemax.5", "Mengemax.7")
+
+Großaufträge= as.data.frame(merge(DEwide_max,DEwide),by.x = "AccountingMonth", by.y = "AccountingMonth")
+Großaufträge$AccountingMonth = as.factor(Großaufträge$AccountingMonth)
+
+#Gruppe1
+ggplot(Großaufträge) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.1)), group = 1)+geom_point(aes(x = AccountingMonth, y = as.numeric(Mengemax.1)), group = 1) + theme(axis.text.x = element_text(angle = 90))+geom_hline(yintercept=mean(DEwide$Menge.1), color = "red")
+#-->Glätten
+#Gruppe2
+ggplot(Großaufträge) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.2)), group = 1)+geom_point(aes(x = AccountingMonth, y = as.numeric(Mengemax.2)), group = 1) + theme(axis.text.x = element_text(angle = 90))+geom_hline(yintercept=mean(DEwide$Menge.2), color = "red")
+#-->Glätten
+#Gruppe3
+ggplot(Großaufträge) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.3)), group = 1)+geom_point(aes(x = AccountingMonth, y = as.numeric(Mengemax.3)), group = 1) + theme(axis.text.x = element_text(angle = 90))+geom_hline(yintercept=mean(DEwide$Menge.3), color = "red")
+#Gruppe5
+ggplot(Großaufträge) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.5)), group = 1)+geom_point(aes(x = AccountingMonth, y = as.numeric(Mengemax.5)), group = 1) + theme(axis.text.x = element_text(angle = 90))+geom_hline(yintercept=mean(DEwide$Menge.5), color = "red")
+#Gruppe7
+ggplot(Großaufträge) + geom_line(aes(x = AccountingMonth, y = as.numeric(Menge.7)), group = 1)+geom_point(aes(x = AccountingMonth, y = as.numeric(Mengemax.7)), group = 1) + theme(axis.text.x = element_text(angle = 90))+geom_hline(yintercept=mean(DEwide$Menge.7), color = "red")
+```
+
+
+
+#Invest Datenlage mittels Forecast ausweiten
+#-------------------->Ungeeignet<---------------------------------
+```{r}
+Invest_DE$InvEts = forecast(ets(Invest_DE$Invest, model='MAN'),2)$fitted
+
+ggplot(Invest_DE)+geom_line(aes(x=AccountingMonth, y=Invest, group=1))+geom_line(aes(x=AccountingMonth, y=InvEts, group=1),colour='pink')+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+forecast(ets(Invest_DE$Invest, model='ZZZ'),25)
+```
+
+
+
+

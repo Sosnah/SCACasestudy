@@ -1,0 +1,1473 @@
+---
+title: "SCA_SS19_Fallstudie"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Laden von Packages
+```{r, message=FALSE, warning=FALSE}
+library("zoo")
+library("forecast")
+library("ggplot2")
+```
+
+```{r}
+transactions = read.csv2("paketone.csv")
+
+str(transactions)
+
+summary(transactions)
+```
+
+
+# Berechnung eines Dataframes mit dem Absatz der verschiedenen Produktgruppen im Vereinigten K?nigreich
+
+```{r}
+
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+
+```
+
+
+# 1. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+#ggplot(gbwide, aes(x = gbwide$AccountingMonth, ymin = (0), ymax = 250)) + 
+  
+  #geom_line(aes(y = gbwide$Menge.1, group = 1, colour = "Menge 1")) +
+
+  #geom_line(aes(y = gbwide$Menge.3, group = 1, colour = "Menge 3")) +
+  
+  #geom_line(aes(y = gbwide$Menge.5, group = 1, colour = "Menge 5")) +
+  
+  #geom_line(aes(y = gbwide$Menge.7, group = 1, colour = "Menge 7")) +
+
+  #theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+# Berechnung der durchschnittlichen monatlichen Nachfragen je Produkt, um damit Ausreißer / Großaufträge besser 
+# bestimmen zu k?nnen
+# Def. Großauftrag: Überschreitet durchschnittliche monatliche Nachfrage
+
+```{r}
+
+summary(gbwide)
+
+```
+
+
+# Es erscheint nicht sinnvoll, Menge.1 sowie Menge.7 von Großaufträgen gemäß oben stehender Definition zu befreien,
+# da das arithmetische Mittel bereits kleiner 1 ist (und nicht weniger als 1 verkauft werden kann). 
+# Auch bei Menge 5 gibt es viele Monate, insbesondere am Anfang des Datenbereichs, welche sich auf 0 belaufen. 
+# Eine sinnvolle Bereinigung um Großaufträge kann also nur über Exklusion dieser Monate erreicht werden.
+# Hier also noch eine Analyse, wie die durchschnittliche Nachfrage in Monaten mit Nachfrage > 0 war:
+
+```{r}
+
+MengeEins = subset(gbwide, Menge.1 > 0)
+
+paste0("Menge 1: ",mean(MengeEins$Menge.1))
+
+# Aus Gründen der Vollständigkeit auch noch der Durchschnitt von Menge 3
+
+paste0("Menge 3: ", mean(gbwide$Menge.3))
+
+MengeFuenf = subset(gbwide, Menge.5 > 0)
+
+paste0("Menge 5: ", mean(MengeFuenf$Menge.5))
+
+MengeSieben = subset(gbwide, Menge.7 > 0)
+
+paste0("Menge 7: ", mean(MengeSieben$Menge.7))
+
+```
+
+
+# Jetzt Anzeige aller als Großaufträge definierter Einträge in Transactions
+
+```{r}
+
+l_transactionsEins = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "1" & Menge > mean(MengeEins$Menge.1))
+
+l_transactionsEins
+
+l_transactionsDrei = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & Menge > mean(gbwide$Menge.3))
+
+l_transactionsDrei
+
+l_transactionsFuenf = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "5" & Menge > mean(MengeFuenf$Menge.5))
+
+l_transactionsFuenf
+
+l_transactionsSieben = subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "7" & Menge > mean(MengeSieben$Menge.7))
+
+l_transactionsSieben
+```
+
+
+# Bereinigung um die zuvor identifizierten Werte 
+# Keine wiederkehrenden Großaufträge erkannt, daher L?schung bei 3 und 5
+# L?schung bei 1 und 7 nicht wirklich sinnvoll, da nicht wirklich Großaufträge
+
+
+```{r}
+
+row_to_delete = which((transactions$Menge > mean(gbwide$Menge.3) & transactions$Gruppe == "3") | (transactions$Menge > mean(MengeFuenf$Menge.5) & transactions$Gruppe == "5"))
+
+transactions = transactions[-row_to_delete,]
+
+rm(row_to_delete)
+
+```
+
+
+# Long -> wide des neuen bereinigten Dataframes
+
+```{r}
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+```
+
+
+# 2. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+# 201711 hat extrem hohen Wert für Menge.3, also Überprüfung
+
+```{r}
+
+subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & AccountingMonth == "201711")
+
+```
+
+
+# An dieser Stelle sind auffällig viele Aufträge (4) mit Menge 25 und fortlaufenden Bestellnummern zu sehen,
+# was darauf hindeutet, dass es sich hierbei nur um einen Auftrag mit der Menge 100 handelt.
+# Dieser würde gemäß Definition als Großauftrag klassifiziert werden und bereinigt werden müssen. 
+# Eine Analyse der anderen Monate mit hohen Bestellmengen sollte vorher durchgeführt werden, sollte es sich hierbei
+# um einen wiederkehrenden Großauftrag handeln. 
+# Das sind die Perioden 201311, 201601, 201901, 201903 
+
+```{r}
+
+subset(transactions, Land == "Vereinigtes Königreich" & Gruppe == "3" & (AccountingMonth == "201711" | AccountingMonth == "201311" | AccountingMonth == "201601" | AccountingMonth == "201901" | AccountingMonth == "201903"))
+
+```
+
+
+# Weder ist das gleiche Muster von Bestellungen wie in 2017-11 zu sehen, noch scheint es ein Muster von 
+# Großaufträgen zu sehen. Bereinigung deshalb nur um die vorher identifizierten Werte.
+
+```{r}
+
+row_to_delete = which(transactions$Menge == "25" & transactions$Gruppe == "3" & transactions$AccountingMonth == "201711")
+
+transactions = transactions[-row_to_delete,]
+
+rm(row_to_delete)
+
+subset(transactions, Land == "Vereinigtes K?nigreich" & Gruppe == "3" & AccountingMonth == "201711")
+
+```
+
+
+# Long -> wide des neuen bereinigten Dataframes
+
+```{r}
+# Aggregierung der Verkäufe in der UK je Periode + Produktgruppe, dabei gleichzeitig Bereinigung um 
+# negative Werte
+
+gb = aggregate(Menge ~ AccountingMonth + Gruppe, data = subset(transactions, Menge > 0 & Land == "Vereinigtes Königreich"), sum)
+
+# Konvertierung von uk im long format ins wide format
+
+gbwide = reshape(gb, timevar = "Gruppe", idvar = "AccountingMonth", direction = "wide")
+
+# Sortierung anhand des AccountingMonths (aufsteigend)
+
+gbwide = gbwide[order(gbwide$AccountingMonth),]
+
+# Bereinigung des Dataframes ukwide um die aus der Konvertierung resultierenden NAs
+
+gbwide[is.na(gbwide)] = 0
+
+# Konvertierung der Daten in das Time-Series Format
+
+#gbwide$Menge.1 = ts(gbwide$Menge.1, frequency = 12)
+#gbwide$Menge.3 = ts(gbwide$Menge.3, frequency = 12)
+#gbwide$Menge.5 = ts(gbwide$Menge.5, frequency = 12)
+#gbwide$Menge.7 = ts(gbwide$Menge.7, frequency = 12)
+
+# Ausgabe des neuen Dataframes
+
+gbwide
+```
+
+
+# 3. Explorative visuelle Datenanalyse für den Absatz in UK
+
+```{r}
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.1), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.3), ymin = 0, ymax = 250), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.5), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(gbwide, aes(x = AccountingMonth, y = as.numeric(Menge.7), ymin = 0, ymax = 20), group = 1) + geom_line() + theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+# Laden der Marktentwicklungsdaten in das gbwide Frame
+
+```{r}
+
+marketdevelopment = read.csv2("Marketdevelopment.csv")
+
+marketdevelopment = marketdevelopment[,c(1, 10, 11)]
+
+gbwide = merge(gbwide, marketdevelopment, by.x = "AccountingMonth", by.y = "Accounting.Month")
+gbwide
+```
+
+# Laden der Elektrizitätspreisdaten in das gbwide Frame
+
+```{r}
+
+p_el_uk = read.csv2("Electricity Prices UK.csv")
+
+p_el_uk$Month = sprintf("%02d",p_el_uk$Month)
+
+p_el_uk$Accounting.Month = paste0(p_el_uk$Year, p_el_uk$Month)
+
+p_el_uk$Price = as.numeric(as.character(p_el_uk$Price))
+
+p_el_uk = p_el_uk[, c(1,4)]
+
+gbwide = merge(gbwide, p_el_uk, by.x = "AccountingMonth", by.y = "Accounting.Month")
+
+gbwidetemp = subset(gbwide, AccountingMonth < 201900)
+
+```
+
+# Laden der Temperaturdaten in das gbwide Frame
+
+```{r}
+
+temp_uk = read.csv2("Temperature UK.csv")
+
+temp_uk$Year = as.numeric(temp_uk$Year)
+
+temp_uk$Month = sprintf("%02d",temp_uk$Month)
+
+temp_uk$Accounting.Month = paste0(as.numeric(temp_uk$Year), temp_uk$Month)
+
+temp_uk = temp_uk[, c(3,4)]
+
+gbwide = merge(gbwide, temp_uk, by.x = "AccountingMonth", by.y = "Accounting.Month")
+```
+
+# Laden der FTSE 100 Daten in das gbwide Frame
+
+```{r}
+
+FTSE = read.csv2("FTSE 100 Historical Data.csv")
+
+FTSE$Year = as.numeric(FTSE$Year)
+
+FTSE$Month = sprintf("%02d",FTSE$Month)
+
+FTSE$Accounting.Month = paste0(as.numeric(FTSE$Year), FTSE$Month)
+
+FTSE$FTSE = FTSE$Price
+
+FTSE = FTSE[, c(10,11)]
+
+gbwide = merge(gbwide, FTSE, by.x = "AccountingMonth", by.y = "Accounting.Month")
+
+```
+
+# Laden der FX Raten in das gbwide Frame
+
+```{r}
+
+FXUKEU = read.csv2("EUR_GBP Historical Data.csv")
+
+FXUKEU$FX = FXUKEU$Price
+
+FXUKEU$Month = sprintf("%02d", FXUKEU$Month)
+
+FXUKEU$Accounting.Month = paste0(as.numeric(FXUKEU$Year), FXUKEU$Month)
+
+FXUKEU = FXUKEU[,c(9, 10)]
+
+gbwide = merge(gbwide, FXUKEU, by.x = "AccountingMonth", by.y = "Accounting.Month")
+
+```
+
+# Laden der Energieverbrauchdaten in das gbwide Frame
+
+```{r}
+
+c_en_uk = read.csv2("UK Energy Consumption Monthly.csv")
+
+c_en_uk$Month = sprintf("%02d", c_en_uk$Month)
+
+c_en_uk$Accounting.Month = paste0(as.numeric(c_en_uk$Year), c_en_uk$Month)
+
+c_en_uk = c_en_uk[,c(1, 4)]
+
+gbwide = merge(gbwide, c_en_uk, by.x = "AccountingMonth", by.y = "Accounting.Month")
+
+```
+
+# Laden der GDP Daten in das gbwide Frame
+
+```{r}
+
+GDP_uk = read.csv2("GDP UK.csv")
+
+GDP_uk = GDP_uk[,-1]
+
+m = length(GDP_uk$GDP) + 1
+
+l = length(GDP_uk$GDP)
+
+n = 1
+
+while (n <= l) {
+  
+  tempone = GDP_uk$GDP[n]*(2/3) + GDP_uk$GDP[n+1]*(1/3)
+    
+  temptwo = GDP_uk$GDP[n]*(1/3) + GDP_uk$GDP[n+1]*(2/3)
+  
+  mm = GDP_uk$Month[n] + 1
+  
+  GDP_uk[m, ] = list(tempone, mm, GDP_uk$Year[n])
+  
+  m = m + 1
+  
+  mm = mm + 1
+  
+  GDP_uk[m, ] = list(temptwo, mm, GDP_uk$Year[n])
+  
+  m = m + 1
+  
+  n = n + 1
+  
+}
+
+GDP_uk$Month = sprintf("%02d", GDP_uk$Month)
+
+GDP_uk$Accounting.Month = paste0(as.numeric(GDP_uk$Year), GDP_uk$Month)
+
+GDP_uk = GDP_uk[,c(1,4)]
+
+gbwide = merge(gbwide, GDP_uk, by.x = "AccountingMonth", by.y = "Accounting.Month")
+gbwide
+```
+
+
+# Testen der Korrelationen
+
+```{r}
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Vereinigtes.Königreich")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Global")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Price")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Temperature")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "FTSE")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "FX")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Consumption")])
+
+cor(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "GDP")])
+
+#Laden des GGally Packages
+library("GGally")
+
+# Correlation Plot erzeugen 
+ggpairs(gbwide[c("Menge.1", "Menge.3", "Menge.5", "Menge.7", "Vereinigtes.Königreich", "Global", "Price", "Temperature", "FTSE", "FX", "Consumption", "GDP")], 
+        
+        # ohne Visualisierung des Fortschritts der Erstellung des plots
+        progress = FALSE,
+        
+        # mit Visualisierung einer Glaettungslinie und Aenderung der Farbe der Punkte, damit Linie erkennbar
+        lower=list(continuous = wrap("smooth_loess", colour="steelblue1")))
+
+```
+# Menge 1
+# Lineare Regression - Zunächst Baseline schaffen
+```{r}
+# Baseline durch Mittelwert erzeugen
+gbwide$Baseline1 = mean(gbwide$Menge.1)
+
+# DataFrame erzeugen, dass bei auf die Beschreibung ("Model") leer bzw. 0 ist
+evaluation = data.frame(Model = "Baseline",
+                        MFE = numeric(1),
+                        MAE = numeric(1),
+                        MSE = numeric(1),
+                        sMAPE = numeric(1))
+
+# MFE berechnen
+evaluation[evaluation$Model == "Baseline",]$MFE = mean(gbwide$Menge.1-gbwide$Baseline1)
+
+# MAE berechnen
+evaluation[evaluation$Model == "Baseline",]$MAE = mean(abs(gbwide$Menge.1-gbwide$Baseline1))
+
+# MSE berechnen
+evaluation[evaluation$Model == "Baseline",]$MSE = mean((gbwide$Menge.1-gbwide$Baseline1)^2)
+
+# sMAPE berechnen
+evaluation[evaluation$Model == "Baseline",]$sMAPE = mean(abs(gbwide$Menge.1-gbwide$Baseline1) / 
+                                                           ((gbwide$Menge.1+gbwide$Baseline1)/2))
+
+# Fehler anzeigen
+evaluation
+
+```
+
+# Plots der größten Korrelation
+```{r message=FALSE, warning=FALSE}
+# Menge 1: größte Korrelation: GDP: 0.29
+# Menge 3: größte Korrelation: Vereinigtes Königreich: 0.69
+# Menge 5: größte Korrelation: Vereinigtes Königreich: 0.31
+# Menge 7: größte Korrelation: FTSE: 0.33
+
+
+# Punktwolke fuer Menge1 - GDP
+# Hintergrund mit Daten
+ggplot(data = gbwide, aes(x = GDP, y = Menge.1)) + 
+  # Punktwolke
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  # Glaettungsgerade fuer die Interpretation des Zusammenhangs
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+
+# Lineare Regression - Residuenplot der größten Korrelation erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge1 = lm(Menge.1 ~ GDP, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge1)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge1$model$GDP, y = modelmenge1$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Lineare Regression - Baseline erweitern
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation = rbind(evaluation, data.frame(Model = "ModelMenge1",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation[evaluation$Model == "ModelMenge1",]$MFE = mean(modelmenge1$residuals)
+
+# MAE berechnen
+evaluation[evaluation$Model == "ModelMenge1",]$MAE = mean(abs(modelmenge1$residuals))
+
+# MSE berechnen
+evaluation[evaluation$Model == "ModelMenge1",]$MSE = mean((modelmenge1$residuals)^2)
+
+# sMAPE berechnen
+evaluation[evaluation$Model == "ModelMenge1",]$sMAPE = mean(abs(modelmenge1$residuals) / 
+                                                           ((modelmenge1$model$Menge.1 + modelmenge1$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation
+```
+# nicht-linearen Einfluss abschätzen
+```{r}
+#Abschaetzung eines linearen zusammenhangs: Reziprok
+ggplot(data = gbwide, aes(x = (gbwide$GDP)^26, y = Menge.1)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+ggplot(data = gbwide, aes(x = (gbwide$GDP)^1, y = Menge.1)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+```
+# transformiertes Modell
+```{r}
+# transformierte Variable speichern
+gbwide$GDPAng = (gbwide$GDP)^26
+
+# Modell 2 erstellen 
+modelmenge1_2 = lm(Menge.1 ~ GDPAng, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge1_2)
+```
+
+# Residuen der Transformation
+```{r}
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge1_2$model$GDPAng, y = modelmenge1_2$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation = rbind(evaluation, data.frame(Model = "ModelMenge1_2",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation[evaluation$Model == "ModelMenge1_2",]$MFE = mean(modelmenge1_2$residuals)
+
+# MAE berechnen
+evaluation[evaluation$Model == "ModelMenge1_2",]$MAE = mean(abs(modelmenge1_2$residuals))
+
+# MSE berechnen
+evaluation[evaluation$Model == "ModelMenge1_2",]$MSE = mean((modelmenge1_2$residuals)^2)
+
+# sMAPE berechnen
+evaluation[evaluation$Model == "ModelMenge1_2",]$sMAPE = mean(abs(modelmenge1_2$residuals) / 
+                                                           ((modelmenge1_2$model$Menge.1 + modelmenge1_2$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation
+```
+
+# Lineare Regression - mit all unseren Variablen
+```{r}
+# lineares Modell Menge 1:
+modelmenge1_3 = lm(Menge.1 ~ GDPAng+Price+FTSE+FX, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge1_3)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge1_3$model$GDP, y = modelmenge1_3$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation = rbind(evaluation, data.frame(Model = "ModelMenge1_3",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation[evaluation$Model == "ModelMenge1_3",]$MFE = mean(modelmenge1_3$residuals)
+
+# MAE berechnen
+evaluation[evaluation$Model == "ModelMenge1_3",]$MAE = mean(abs(modelmenge1_3$residuals))
+
+# MSE berechnen
+evaluation[evaluation$Model == "ModelMenge1_3",]$MSE = mean((modelmenge1_3$residuals)^2)
+
+# sMAPE berechnen
+evaluation[evaluation$Model == "ModelMenge1_3",]$sMAPE = mean(abs(modelmenge1_3$residuals) / 
+                                                           ((modelmenge1_3$model$Menge.1 + modelmenge1_3$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation
+```
+
+# Aufteilung in Trainings- und Testset
+
+```{r}
+# Einen zufaelligen Zustand herstellen (der jedoch kontrolliert erstellt wird und daher wiederholbar ist)
+set.seed(1814)
+
+# eine Zufallsaufwahl erstellen: Aus der Liste von Zahlen 1 bis Laenge von gbwide werden 80% gewaehlt
+zufall = sample(1:nrow(gbwide), nrow(gbwide)*0.8)
+
+# Die Eintraege in der Zufallsauswahl gehen in das TrainingsSet
+gbwideTraining = gbwide[zufall, ]
+
+# Die Eintraege nicht in der Zufallsauswahl gehen in das TestSet
+gbwideTest = gbwide[-zufall,]
+```
+
+# Lineare Regression - mit all unseren Variablen - neu erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge1_31 = lm(Menge.1 ~ GDPAng+Price+FTSE+FX, data = gbwideTraining)
+
+# Anzeigen des Modells
+summary(modelmenge1_31)
+
+```
+# Bewertung des Traings- und Testsets
+```{r}
+# Vorhersage treffen
+pred31 = predict(modelmenge1_31, newdata = gbwideTest)
+
+
+# Data Frame erweitern
+evaluation = rbind(evaluation, data.frame(Model = c("ModelMenge1_31_test"),
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation[evaluation$Model == "ModelMenge1_31_test",]$MFE = mean(gbwideTest$Menge.1 - pred31)
+
+# MAE berechnen
+evaluation[evaluation$Model == "ModelMenge1_31_test",]$MAE = mean(abs(gbwideTest$Menge.1 - pred31))
+
+# MSE berechnen
+evaluation[evaluation$Model == "ModelMenge1_31_test",]$MSE = mean((gbwideTest$Menge.1 - pred31)^2)
+
+# sMAPE berechnen
+evaluation[evaluation$Model == "ModelMenge1_31_test",]$sMAPE = mean(abs(gbwideTest$Menge.1 - pred31) / 
+                                                           ((gbwideTest$Menge.1 + pred31)/2))
+
+# Fehler anzeigen
+evaluation
+```
+
+
+# Menge 3
+# Lineare Regression - Zunächst Baseline schaffen
+```{r}
+# Baseline durch Mittelwert erzeugen
+gbwide$Baseline3 = mean(gbwide$Menge.3)
+
+# DataFrame erzeugen, dass bei auf die Beschreibung ("Model") leer bzw. 0 ist
+evaluation3 = data.frame(Model = "Baseline",
+                        MFE = numeric(1),
+                        MAE = numeric(1),
+                        MSE = numeric(1),
+                        sMAPE = numeric(1))
+
+# MFE berechnen
+evaluation3[evaluation3$Model == "Baseline",]$MFE = mean(gbwide$Menge.3-gbwide$Baseline3)
+
+# MAE berechnen
+evaluation3[evaluation3$Model == "Baseline",]$MAE = mean(abs(gbwide$Menge.3-gbwide$Baseline3))
+
+# MSE berechnen
+evaluation3[evaluation3$Model == "Baseline",]$MSE = mean((gbwide$Menge.3-gbwide$Baseline3)^2)
+
+# sMAPE berechnen
+evaluation3[evaluation3$Model == "Baseline",]$sMAPE = mean(abs(gbwide$Menge.3-gbwide$Baseline3) / 
+                                                           ((gbwide$Menge.3+gbwide$Baseline3)/2))
+
+# Fehler anzeigen
+evaluation3
+
+```
+
+# Plots der größten Korrelation
+```{r message=FALSE, warning=FALSE}
+# Menge 1: größte Korrelation: GDP: 0.29
+# Menge 3: größte Korrelation: Vereinigtes Königreich: 0.69
+# Menge 5: größte Korrelation: Vereinigtes Königreich: 0.31
+# Menge 7: größte Korrelation: FTSE: 0.33
+
+
+# Punktwolke fuer Menge1 - GDP
+# Hintergrund mit Daten
+ggplot(data = gbwide, aes(x = Vereinigtes.Königreich, y = Menge.3)) + 
+  # Punktwolke
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  # Glaettungsgerade fuer die Interpretation des Zusammenhangs
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+
+# Lineare Regression - Residuenplot der größten Korrelation erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge3 = lm(Menge.3 ~ Vereinigtes.Königreich, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge3)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge3$model$Vereinigtes.Königreich, y = modelmenge3$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Lineare Regression - Baseline erweitern
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation3 = rbind(evaluation3, data.frame(Model = "ModelMenge3",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3",]$MFE = mean(modelmenge3$residuals)
+
+# MAE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3",]$MAE = mean(abs(modelmenge3$residuals))
+
+# MSE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3",]$MSE = mean((modelmenge3$residuals)^2)
+
+# sMAPE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3",]$sMAPE = mean(abs(modelmenge3$residuals) / 
+                                                           ((modelmenge3$model$Menge.3 + modelmenge3$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation3
+```
+# nicht-linearen Einfluss abschätzen
+```{r}
+#Abschaetzung eines linearen zusammenhangs: Reziprok
+ggplot(data = gbwide, aes(x = (gbwide$Vereinigtes.Königreich)^2, y = Menge.3)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+ggplot(data = gbwide, aes(x = (gbwide$Vereinigtes.Königreich)^1, y = Menge.3)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+```
+# transformiertes Modell
+```{r}
+# transformierte Variable speichern
+gbwide$Vereinigtes.Königreich3 = (gbwide$Vereinigtes.Königreich)^2
+
+# Modell 2 erstellen 
+modelmenge3_2 = lm(Menge.3 ~ Vereinigtes.Königreich3, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge3_2)
+```
+
+# Residuen der Transformation
+```{r}
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge3_2$model$Vereinigtes.Königreich3, y = modelmenge3_2$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation3 = rbind(evaluation3, data.frame(Model = "ModelMenge3_2",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_2",]$MFE = mean(modelmenge3_2$residuals)
+
+# MAE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_2",]$MAE = mean(abs(modelmenge3_2$residuals))
+
+# MSE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_2",]$MSE = mean((modelmenge3_2$residuals)^2)
+
+# sMAPE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_2",]$sMAPE = mean(abs(modelmenge3_2$residuals) / 
+                                                           ((modelmenge3_2$model$Menge.3 + modelmenge3_2$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation3
+```
+
+# Lineare Regression - mit all unseren Variablen
+```{r}
+# lineares Modell Menge 1:
+modelmenge3_3 = lm(Menge.1 ~ Vereinigtes.Königreich+Price+FTSE+FX+GDP, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge3_3)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge3_3$model$GDP, y = modelmenge3_3$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation3 = rbind(evaluation3, data.frame(Model = "ModelMenge3_3",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_3",]$MFE = mean(modelmenge3_3$residuals)
+
+# MAE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_3",]$MAE = mean(abs(modelmenge3_3$residuals))
+
+# MSE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_3",]$MSE = mean((modelmenge3_3$residuals)^2)
+
+# sMAPE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_3",]$sMAPE = mean(abs(modelmenge3_3$residuals) / 
+                                                           ((modelmenge3_3$model$Menge.3 + modelmenge3_3$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation3
+```
+
+# Aufteilung in Trainings- und Testset
+
+```{r}
+# Einen zufaelligen Zustand herstellen (der jedoch kontrolliert erstellt wird und daher wiederholbar ist)
+set.seed(1814)
+
+# eine Zufallsaufwahl erstellen: Aus der Liste von Zahlen 1 bis Laenge von gbwide werden 80% gewaehlt
+zufall = sample(1:nrow(gbwide), nrow(gbwide)*0.8)
+
+# Die Eintraege in der Zufallsauswahl gehen in das TrainingsSet
+gbwideTraining3 = gbwide[zufall, ]
+
+# Die Eintraege nicht in der Zufallsauswahl gehen in das TestSet
+gbwideTest3 = gbwide[-zufall,]
+```
+
+# Lineare Regression - mit all unseren Variablen - neu erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge3_31 = lm(Menge.3 ~ Vereinigtes.Königreich+Price+FTSE+FX+GDP, data = gbwideTraining3)
+
+# Anzeigen des Modells
+summary(modelmenge3_31)
+
+```
+# Bewertung des Traings- und Testsets
+```{r}
+# Vorhersage treffen
+pred33 = predict(modelmenge3_31, newdata = gbwideTest3)
+
+
+# Data Frame erweitern
+evaluation3 = rbind(evaluation3, data.frame(Model = c("ModelMenge3_31_test"),
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_31_test",]$MFE = mean(gbwideTest3$Menge.3 - pred33)
+
+# MAE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_31_test",]$MAE = mean(abs(gbwideTest3$Menge.3 - pred33))
+
+# MSE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_31_test",]$MSE = mean((gbwideTest3$Menge.3 - pred33)^2)
+
+# sMAPE berechnen
+evaluation3[evaluation3$Model == "ModelMenge3_31_test",]$sMAPE = mean(abs(gbwideTest3$Menge.3 - pred33) / ((gbwideTest3$Menge.3 + pred33)/2))
+
+# Fehler anzeigen
+evaluation3
+```
+
+# Menge 5
+# Lineare Regression - Zunächst Baseline schaffen
+```{r}
+# Baseline durch Mittelwert erzeugen
+gbwide$Baseline5 = mean(gbwide$Menge.5)
+
+# DataFrame erzeugen, dass bei auf die Beschreibung ("Model") leer bzw. 0 ist
+evaluation5 = data.frame(Model = "Baseline",
+                        MFE = numeric(1),
+                        MAE = numeric(1),
+                        MSE = numeric(1),
+                        sMAPE = numeric(1))
+
+# MFE berechnen
+evaluation5[evaluation5$Model == "Baseline",]$MFE = mean(gbwide$Menge.5-gbwide$Baseline5)
+
+# MAE berechnen
+evaluation5[evaluation5$Model == "Baseline",]$MAE = mean(abs(gbwide$Menge.5-gbwide$Baseline5))
+
+# MSE berechnen
+evaluation5[evaluation5$Model == "Baseline",]$MSE = mean((gbwide$Menge.5-gbwide$Baseline5)^2)
+
+# sMAPE berechnen
+evaluation5[evaluation5$Model == "Baseline",]$sMAPE = mean(abs(gbwide$Menge.5-gbwide$Baseline5) / 
+                                                           ((gbwide$Menge.5+gbwide$Baseline5)/2))
+
+# Fehler anzeigen
+evaluation5
+
+```
+
+# Plots der größten Korrelation
+```{r message=FALSE, warning=FALSE}
+# Menge 1: größte Korrelation: GDP: 0.29
+# Menge 3: größte Korrelation: Vereinigtes Königreich: 0.69
+# Menge 5: größte Korrelation: Vereinigtes Königreich: 0.31
+# Menge 7: größte Korrelation: FTSE: 0.33
+
+
+# Punktwolke fuer Menge1 - GDP
+# Hintergrund mit Daten
+ggplot(data = gbwide, aes(x = Vereinigtes.Königreich, y = Menge.5)) + 
+  # Punktwolke
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  # Glaettungsgerade fuer die Interpretation des Zusammenhangs
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+
+# Lineare Regression - Residuenplot der größten Korrelation erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge5 = lm(Menge.5 ~ Vereinigtes.Königreich, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge5)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge5$model$Vereinigtes.Königreich, y = modelmenge5$residuals)) +
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Lineare Regression - Baseline erweitern
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation5 = rbind(evaluation5, data.frame(Model = "ModelMenge5",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5",]$MFE = mean(modelmenge5$residuals)
+
+# MAE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5",]$MAE = mean(abs(modelmenge5$residuals))
+
+# MSE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5",]$MSE = mean((modelmenge5$residuals)^2)
+
+# sMAPE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5",]$sMAPE = mean(abs(modelmenge5$residuals) / 
+                                                           ((modelmenge5$model$Menge.5 + modelmenge5$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation5
+```
+# nicht-linearen Einfluss abschätzen
+```{r}
+#Abschaetzung eines linearen zusammenhangs: Reziprok
+ggplot(data = gbwide, aes(x = (gbwide$Vereinigtes.Königreich)^2, y = Menge.5)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+ggplot(data = gbwide, aes(x = (gbwide$Vereinigtes.Königreich)^1, y = Menge.5)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+```
+# transformiertes Modell
+```{r}
+# transformierte Variable speichern
+gbwide$Vereinigtes.Königreich5 = (gbwide$Vereinigtes.Königreich)^2
+
+# Modell 2 erstellen 
+modelmenge5_2 = lm(Menge.5 ~ Vereinigtes.Königreich5, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge5_2)
+```
+
+# Residuen der Transformation
+```{r}
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge5_2$model$Vereinigtes.Königreich5, y = modelmenge5_2$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation5 = rbind(evaluation5, data.frame(Model = "ModelMenge5_2",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_2",]$MFE = mean(modelmenge5_2$residuals)
+
+# MAE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_2",]$MAE = mean(abs(modelmenge5_2$residuals))
+
+# MSE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_2",]$MSE = mean((modelmenge5_2$residuals)^2)
+
+# sMAPE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_2",]$sMAPE = mean(abs(modelmenge5_2$residuals) / 
+                                                           ((modelmenge5_2$model$Menge.5 + modelmenge5_2$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation5
+```
+
+# Lineare Regression - mit all unseren Variablen
+```{r}
+# lineares Modell Menge 1:
+modelmenge5_3 = lm(Menge.5 ~ Vereinigtes.Königreich+GDP+FTSE+FX, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge5_3)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge5_3$model$Vereinigtes.Königreich, y = modelmenge5_3$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation5 = rbind(evaluation5, data.frame(Model = "ModelMenge5_3",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_3",]$MFE = mean(modelmenge5_3$residuals)
+
+# MAE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_3",]$MAE = mean(abs(modelmenge5_3$residuals))
+
+# MSE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_3",]$MSE = mean((modelmenge5_3$residuals)^2)
+
+# sMAPE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_3",]$sMAPE = mean(abs(modelmenge5_3$residuals) / 
+                                                           ((modelmenge5_3$model$Menge.5 + modelmenge5_3$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation5
+```
+
+# Aufteilung in Trainings- und Testset
+
+```{r}
+# Einen zufaelligen Zustand herstellen (der jedoch kontrolliert erstellt wird und daher wiederholbar ist)
+set.seed(1814)
+
+# eine Zufallsaufwahl erstellen: Aus der Liste von Zahlen 1 bis Laenge von gbwide werden 80% gewaehlt
+zufall = sample(1:nrow(gbwide), nrow(gbwide)*0.8)
+
+# Die Eintraege in der Zufallsauswahl gehen in das TrainingsSet
+gbwideTraining5 = gbwide[zufall, ]
+
+# Die Eintraege nicht in der Zufallsauswahl gehen in das TestSet
+gbwideTest5 = gbwide[-zufall,]
+```
+
+# Lineare Regression - mit all unseren Variablen - neu erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge5_31 = lm(Menge.5 ~ Vereinigtes.Königreich+GDP+Price+FTSE+FX, data = gbwideTraining5)
+
+# Anzeigen des Modells
+summary(modelmenge5_31)
+
+```
+# Bewertung des Traings- und Testsets
+```{r}
+# Vorhersage treffen
+pred51 = predict(modelmenge5_31, newdata = gbwideTest5)
+
+
+# Data Frame erweitern
+evaluation5 = rbind(evaluation5, data.frame(Model = c("ModelMenge5_31_test"),
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_31_test",]$MFE = mean(gbwideTest5$Menge.5 - pred51)
+
+# MAE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_31_test",]$MAE = mean(abs(gbwideTest5$Menge.5 - pred51))
+
+# MSE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_31_test",]$MSE = mean((gbwideTest5$Menge.5 - pred51)^2)
+
+# sMAPE berechnen
+evaluation5[evaluation5$Model == "ModelMenge5_31_test",]$sMAPE = mean(abs(gbwideTest5$Menge.5 - pred51) / 
+                                                           ((gbwideTest5$Menge.5 + pred51)/2))
+
+# Fehler anzeigen
+evaluation5
+```
+
+
+# Menge 7
+# Lineare Regression - Zunächst Baseline schaffen
+```{r}
+# Baseline durch Mittelwert erzeugen
+gbwide$Baseline7 = mean(gbwide$Menge.7)
+
+# DataFrame erzeugen, dass bei auf die Beschreibung ("Model") leer bzw. 0 ist
+evaluation7 = data.frame(Model = "Baseline",
+                        MFE = numeric(1),
+                        MAE = numeric(1),
+                        MSE = numeric(1),
+                        sMAPE = numeric(1))
+
+# MFE berechnen
+evaluation7[evaluation7$Model == "Baseline",]$MFE = mean(gbwide$Menge.7-gbwide$Baseline7)
+
+# MAE berechnen
+evaluation7[evaluation7$Model == "Baseline",]$MAE = mean(abs(gbwide$Menge.7-gbwide$Baseline7))
+
+# MSE berechnen
+evaluation7[evaluation7$Model == "Baseline",]$MSE = mean((gbwide$Menge.7-gbwide$Baseline7)^2)
+
+# sMAPE berechnen
+evaluation7[evaluation7$Model == "Baseline",]$sMAPE = mean(abs(gbwide$Menge.7-gbwide$Baseline7) / 
+                                                           ((gbwide$Menge.7+gbwide$Baseline7)/2))
+
+# Fehler anzeigen
+evaluation7
+
+```
+
+# Plots der größten Korrelation
+```{r message=FALSE, warning=FALSE}
+# Menge 1: größte Korrelation: GDP: 0.29
+# Menge 3: größte Korrelation: Vereinigtes Königreich: 0.69
+# Menge 5: größte Korrelation: Vereinigtes Königreich: 0.31
+# Menge 7: größte Korrelation: FTSE: 0.33
+
+
+# Punktwolke fuer Menge1 - GDP
+# Hintergrund mit Daten
+ggplot(data = gbwide, aes(x = FTSE, y = Menge.7)) + 
+  # Punktwolke
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  # Glaettungsgerade fuer die Interpretation des Zusammenhangs
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+
+# Lineare Regression - Residuenplot der größten Korrelation erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge7 = lm(Menge.7 ~ FTSE, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge7)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge7$model$FTSE, y = modelmenge7$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Lineare Regression - Baseline erweitern
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation7 = rbind(evaluation7, data.frame(Model = "ModelMenge7",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7",]$MFE = mean(modelmenge7$residuals)
+
+# MAE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7",]$MAE = mean(abs(modelmenge7$residuals))
+
+# MSE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7",]$MSE = mean((modelmenge7$residuals)^2)
+
+# sMAPE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7",]$sMAPE = mean(abs(modelmenge7$residuals) / 
+                                                           ((modelmenge7$model$Menge.7 + modelmenge7$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation7
+```
+# nicht-linearen Einfluss abschätzen
+```{r}
+#Abschaetzung eines linearen zusammenhangs: Reziprok
+ggplot(data = gbwide, aes(x =(gbwide$FTSE)^-3, y = Menge.7)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+ggplot(data = gbwide, aes(x = gbwide$FTSE, y = Menge.7)) +
+  geom_point(shape = 21, size = 1.5, colour = "blue") + 
+  geom_smooth(se = FALSE, method = "auto")
+
+```
+# transformiertes Modell
+```{r}
+# transformierte Variable speichern
+gbwide$FTSEAng = (gbwide$GDP)^-3
+
+# Modell 2 erstellen 
+modelmenge7_2 = lm(Menge.7 ~ FTSEAng, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge7_2)
+```
+
+# Residuen der Transformation
+```{r}
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge7_2$model$FTSEAng, y = modelmenge7_2$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = "auto")
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation7 = rbind(evaluation7, data.frame(Model = "ModelMenge7_2",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_2",]$MFE = mean(modelmenge7_2$residuals)
+
+# MAE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_2",]$MAE = mean(abs(modelmenge7_2$residuals))
+
+# MSE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_2",]$MSE = mean((modelmenge7_2$residuals)^2)
+
+# sMAPE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_2",]$sMAPE = mean(abs(modelmenge7_2$residuals) / 
+                                                           ((modelmenge7_2$model$Menge.7 + modelmenge7_2$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation7
+```
+
+# Lineare Regression - mit all unseren Variablen
+```{r}
+# lineares Modell Menge 1:
+modelmenge7_3 = lm(Menge.7 ~ FTSEAng+GDP+Global+FX, data = gbwide)
+
+# Anzeigen des Modells
+summary(modelmenge7_3)
+
+# Residuenplot
+ggplot(data = NULL, aes(x = modelmenge7_3$model$GDP, y = modelmenge7_3$residuals)) + 
+  geom_point() + 
+  geom_smooth(se = FALSE, method = loess)
+
+
+```
+
+# Bewerten der Transformation
+```{r}
+
+# Data Frame erweitern (mit rbind(altes DataFrame, neues DataFrame) )
+evaluation7 = rbind(evaluation7, data.frame(Model = "ModelMenge7_3",
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_3",]$MFE = mean(modelmenge7_3$residuals)
+
+# MAE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_3",]$MAE = mean(abs(modelmenge7_3$residuals))
+
+# MSE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_3",]$MSE = mean((modelmenge7_3$residuals)^2)
+
+# sMAPE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_3",]$sMAPE = mean(abs(modelmenge7_3$residuals) / 
+                                                           ((modelmenge7_3$model$Menge.7 + modelmenge7_3$fitted.values)/2))
+
+# Fehler anzeigen
+evaluation7
+```
+
+# Aufteilung in Trainings- und Testset
+
+```{r}
+# Einen zufaelligen Zustand herstellen (der jedoch kontrolliert erstellt wird und daher wiederholbar ist)
+set.seed(1814)
+
+# eine Zufallsaufwahl erstellen: Aus der Liste von Zahlen 1 bis Laenge von gbwide werden 80% gewaehlt
+zufall = sample(1:nrow(gbwide), nrow(gbwide)*0.8)
+
+# Die Eintraege in der Zufallsauswahl gehen in das TrainingsSet
+gbwideTraining7 = gbwide[zufall, ]
+
+# Die Eintraege nicht in der Zufallsauswahl gehen in das TestSet
+gbwideTest7 = gbwide[-zufall,]
+```
+
+# Lineare Regression - mit all unseren Variablen - neu erstellen
+```{r}
+# lineares Modell Menge 1:
+modelmenge7_31 = lm(Menge.7 ~ FTSEAng+Global+GDP+FX, data = gbwideTraining7)
+
+# Anzeigen des Modells
+summary(modelmenge7_31)
+
+```
+# Bewertung des Traings- und Testsets
+```{r}
+# Vorhersage treffen
+pred71 = predict(modelmenge7_31, newdata = gbwideTest7)
+
+
+# Data Frame erweitern
+evaluation7 = rbind(evaluation7, data.frame(Model = c("ModelMenge7_31_test"),
+                                          MFE = numeric(1),
+                                          MAE = numeric(1),
+                                          MSE = numeric(1),
+                                          sMAPE = numeric(1)))
+
+# MFE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_31_test",]$MFE = mean(gbwideTest7$Menge.7 - pred71)
+
+# MAE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_31_test",]$MAE = mean(abs(gbwideTest7$Menge.7 - pred71))
+
+# MSE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_31_test",]$MSE = mean((gbwideTest7$Menge.7 - pred71)^2)
+
+# sMAPE berechnen
+evaluation7[evaluation7$Model == "ModelMenge7_31_test",]$sMAPE = mean(abs(gbwideTest7$Menge.7 - pred71) / 
+                                                           ((gbwideTest7$Menge.7 + pred71)/2))
+
+# Fehler anzeigen
+evaluation7
+```
