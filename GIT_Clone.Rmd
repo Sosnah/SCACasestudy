@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ##### Latest changes: https://github.com/marinustau/SCACasestudy/pull/3/commits/d24e941d740d693c714537fd580fdc6cfebe7c9f
-
+Konnte nicht viel weiterarbeiten, wegen fehlenden Dateien
 
 
 
